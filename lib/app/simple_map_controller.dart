@@ -1,8 +1,5 @@
 import 'dart:async';
-import 'dart:developer';
-import 'dart:math';
 
-import 'package:flutter/material.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'package:geolocator/geolocator.dart';
 // import 'package:geolocator/geolocator.dart';
@@ -13,18 +10,40 @@ import 'constants.dart';
 
 class SimpleMapController extends GetxController {
   final Completer<GoogleMapController> controllerGoogleMap = Completer();
-  bool isLoading = false;
   late CameraPosition initialGoogleMap;
-  late List<Marker> markers = [];
+
+  bool isLoading = false;
+  bool isPopUp = false;
+  List<Marker> markers = [];
+  Set<Polyline> polylines = {};
+  List<List<double>> latLngPoint = [];
+  List<Map<String, dynamic>> distanceLines = [];
+
+  void matrixDistance() {
+    List<List<int>> matriks = [];
+    for (int i = 0; i < latLngPoint.length; i++) {
+      List<int> temp = [];
+      for (int j = 0; j < latLngPoint.length; j++) {
+        temp.add(distanceTwoPoint(latLngPoint[i][0], latLngPoint[i][1], latLngPoint[j][0], latLngPoint[j][1]));
+      }
+      matriks.add(temp);
+    }
+    // return matriks;
+    // print(matriks);
+    // inspect(matriks);
+  }
 
   void addLocationMarker({required double lat, required double lng}) {
-    print('lat: $lat, lng: $lng');
     String id = (markers.length + 1).toString();
     markers.add(
       Marker(
         markerId: MarkerId(id),
         position: LatLng(lat, lng),
         draggable: true,
+        onDragEnd: (argument) {
+          latLngPoint[int.parse(id) - 1] = [argument.latitude, argument.longitude];
+          generateLines();
+        },
         infoWindow: InfoWindow(
           title: 'Position $id',
           snippet: '$lat, $lng',
@@ -34,17 +53,33 @@ class SimpleMapController extends GetxController {
         ),
       ),
     );
+
+    latLngPoint.add([lat, lng]);
     update();
   }
 
   void deleteMarker(MarkerId markerId) {
     markers.removeWhere((marker) => marker.markerId == markerId);
+    latLngPoint.removeAt(int.parse(markerId.value) - 1);
+    if (markers.length > 1) {
+      generateLines();
+    } else {
+      polylines.clear();
+    }
+    update();
+  }
+
+  void deleteAllMarker() {
+    markers.clear();
+    latLngPoint.clear();
+    polylines.clear();
+    distanceLines.clear();
     update();
   }
 
   Future<void> gotoCurrentLocation() async {
     final GoogleMapController controller = await controllerGoogleMap.future;
-    getUserCurrentLocation().then((value) {
+    await getUserCurrentLocation().then((value) {
       controller.animateCamera(CameraUpdate.newCameraPosition(
         CameraPosition(
           target: LatLng(value.latitude, value.longitude),
@@ -61,21 +96,10 @@ class SimpleMapController extends GetxController {
     return await Geolocator.getCurrentPosition();
   }
 
-// !------------------------------------------------------------------------------------------------------------------------
-
-  // PolylinePoints polylinePoints = PolylinePoints();
-  // Map<PolylineId, Polyline> polylines = {};
-  late Set<Polyline> polylines = {};
-  // Set<Polyline> polylines = {};
-
-  List<List<double>> temp = [
-    [-8.167338055438705, 113.70853934437035],
-    [-8.165251880296916, 113.71313095092773],
-    [-8.169640269472676, 113.71153805404902],
-  ];
-
+// ! ---------------------------------------------GENERATE LINES---------------------------------------------
   Future<void> getPolyPoints({
     required String idLine,
+    required int colorId,
     required double lat1,
     required double lng1,
     required double lat2,
@@ -96,59 +120,67 @@ class SimpleMapController extends GetxController {
       }
     }
 
-    List colors = [Colors.red, Colors.green, Colors.yellow];
-    Random random = Random();
-
     polylines.add(
       Polyline(
         polylineId: PolylineId(idLine),
-        color: colors[random.nextInt(3)],
+        color: Constants.colors[colorId],
         points: polylineCoordinates,
         width: 4,
+        consumeTapEvents: true,
       ),
     );
   }
 
-  void generateLines() async {
-    for (var i = 0; i < temp.length - 1; i++) {
+  Future<void> generateLines() async {
+    polylines.clear();
+    distanceLines.clear();
+
+    for (var i = 0; i < latLngPoint.length - 1; i++) {
+      // ! GENERATE DISTANCE
+      int distance = distanceTwoPoint(
+        latLngPoint[i][0],
+        latLngPoint[i][1],
+        latLngPoint[i + 1][0],
+        latLngPoint[i + 1][1],
+      );
+
+      distanceLines.add({
+        'id': i.toString(),
+        'color': Constants.colors[i],
+        'distance': distance,
+      });
+
+      // ! GENERATE LINE
       await getPolyPoints(
         idLine: i.toString(),
-        lat1: temp[i][0],
-        lng1: temp[i][1],
-        lat2: temp[i + 1][0],
-        lng2: temp[i + 1][1],
+        colorId: i,
+        lat1: latLngPoint[i][0],
+        lng1: latLngPoint[i][1],
+        lat2: latLngPoint[i + 1][0],
+        lng2: latLngPoint[i + 1][1],
       );
-      update();
     }
-    print('-------------------------------------------- ');
-    inspect(polylines);
-    print('-------------------------------------------- ');
+
+    update();
   }
 
-  // addPolyLine() {
-  //   PolylineId id = const PolylineId("poly");
-  //   Polyline polyline = Polyline(polylineId: id, color: Colors.red, points: polylineCoordinates);
-  //   polylines[id] = polyline;
-  //   update();
-  // }
+  int distanceTwoPoint(double lat1, double lng1, double lat2, double lng2) {
+    double distance = Geolocator.distanceBetween(lat1, lng1, lat2, lng2);
+    return distance.toInt();
+  }
 
-  // void makeLines() async {
-  //   await polylinePoints
-  //       .getRouteBetweenCoordinates(
-  //           Constants.apiKey,
-  //           const PointLatLng(-8.1688904, 113.7117308), //Starting LATLANG
-  //           const PointLatLng(-8.174514467755436, 113.71223174035549), //End LATLANG
-  //           travelMode: TravelMode.driving)
-  //       .then((value) {
-  //     for (var point in value.points) {
-  //       polylineCoordinates.add(LatLng(point.latitude, point.longitude));
-  //     }
-  //   }).then((value) {
-  //     addPolyLine();
-  //   });
-  // }
+  void updatePoliline(PolylineId polylineId) {
+    // polylines.removeWhere((element) => element. == polylineId);
+    Polyline line = polylines.firstWhere((element) => element.polylineId == polylineId);
+    // polylines
+    // update();
+  }
+// ! ---------------------------------------------GENERATE LINES END---------------------------------------------
 
-// !------------------------------------------------------------------------------------------------------------------------
+  void disableLine(PolylineId polylineId) {
+    polylines.firstWhere((element) => element.polylineId == polylineId).copyWith(visibleParam: false);
+    update();
+  }
 
   @override
   void onInit() async {
@@ -156,17 +188,9 @@ class SimpleMapController extends GetxController {
     await getUserCurrentLocation().then((value) {
       initialGoogleMap = CameraPosition(
         target: LatLng(value.latitude, value.longitude),
-        zoom: 16,
+        zoom: 18,
       );
-      markers.add(
-        Marker(
-          markerId: const MarkerId("1"),
-          position: LatLng(value.latitude, value.longitude),
-          infoWindow: const InfoWindow(
-            title: 'My Current Location',
-          ),
-        ),
-      );
+      addLocationMarker(lat: value.latitude, lng: value.longitude);
     });
     isLoading = true;
     update();
