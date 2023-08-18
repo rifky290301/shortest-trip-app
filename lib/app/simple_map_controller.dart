@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'package:geolocator/geolocator.dart';
@@ -7,46 +8,68 @@ import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 import 'constants.dart';
+import 'helper/math_calculate.dart';
+import 'logic/cheapes_insertion_heuristic.dart';
 
 class SimpleMapController extends GetxController {
   final Completer<GoogleMapController> controllerGoogleMap = Completer();
-  late CameraPosition initialGoogleMap;
+  MathCalculate mathCalculate = MathCalculate();
+  PolylinePoints polylinePoints = PolylinePoints();
+  CIH cih = CIH();
+  Constants constants = Constants();
 
+  late CameraPosition initialGoogleMap;
   bool isLoading = false;
   bool isPopUp = false;
   List<Marker> markers = [];
+  Set<Polygon> polygons = {};
   Set<Polyline> polylines = {};
   List<List<double>> latLngPoint = [];
   List<Map<String, dynamic>> distanceLines = [];
+  List<List<double>> matriks = [];
+  String? distance;
 
-  void matrixDistance() {
-    List<List<int>> matriks = [];
+  List<Polyline> get polylinesList => polylines.toList();
+
+  Future<void> matrixDistance() async {
+    List<List<double>> matriksTemp = [];
     for (int i = 0; i < latLngPoint.length; i++) {
-      List<int> temp = [];
+      List<double> temp = [];
       for (int j = 0; j < latLngPoint.length; j++) {
-        temp.add(distanceTwoPoint(latLngPoint[i][0], latLngPoint[i][1], latLngPoint[j][0], latLngPoint[j][1]));
+        await mathCalculate
+            .calculateDistanceTwoPoint(
+              lat1: latLngPoint[i][0],
+              lng1: latLngPoint[i][1],
+              lat2: latLngPoint[j][0],
+              lng2: latLngPoint[j][1],
+              polylinePoints: polylinePoints,
+            )
+            .then((value) => temp.add(value.toDouble()));
       }
-      matriks.add(temp);
+      matriksTemp.add(temp);
     }
-    // return matriks;
-    // print(matriks);
-    // inspect(matriks);
+    matriks.addAll(matriksTemp);
+
+    for (int i = 0; i < matriksTemp.length; i++) {
+      for (int j = 0; j < matriksTemp.length; j++) {
+        matriks[i][j] = matriksTemp[j][i];
+      }
+    }
   }
 
   void addLocationMarker({required double lat, required double lng}) {
-    String id = (markers.length + 1).toString();
+    String id = (markers.length).toString();
     markers.add(
       Marker(
         markerId: MarkerId(id),
         position: LatLng(lat, lng),
         draggable: true,
-        onDragEnd: (argument) {
+        onDragEnd: (argument) async {
           latLngPoint[int.parse(id) - 1] = [argument.latitude, argument.longitude];
-          generateLines();
+          await generateLines();
         },
         infoWindow: InfoWindow(
-          title: 'Position $id',
-          snippet: '$lat, $lng',
+          title: 'Position ${int.parse(id) + 1}',
           onTap: () {
             deleteMarker(MarkerId(id));
           },
@@ -58,11 +81,166 @@ class SimpleMapController extends GetxController {
     update();
   }
 
-  void deleteMarker(MarkerId markerId) {
+// ! ---------------------------------------------GENERATE LINES---------------------------------------------
+  Future<void> drawPolyPoints({
+    required String idLine,
+    required int colorId,
+    required double lat1,
+    required double lng1,
+    required double lat2,
+    required double lng2,
+    required Color colorLine,
+  }) async {
+    List<LatLng> polylineCoordinates = [];
+
+    PolylineResult result = await polylinePoints.getRouteBetweenCoordinates(
+      Constants.apiKey,
+      PointLatLng(lat1, lng1),
+      PointLatLng(lat2, lng2),
+      travelMode: TravelMode.driving,
+    );
+
+    if (result.points.isNotEmpty) {
+      for (var point in result.points) {
+        polylineCoordinates.add(LatLng(point.latitude, point.longitude));
+      }
+    }
+
+    polylines.add(
+      Polyline(
+        polylineId: PolylineId(idLine),
+        color: colorLine,
+        points: polylineCoordinates,
+        width: 8,
+        consumeTapEvents: true,
+        endCap: Cap.roundCap,
+        jointType: JointType.round,
+        onTap: () {
+          // print('tap');
+          highlightLine(PolylineId(idLine));
+        },
+        // zIndex: colorId,
+      ),
+    );
+  }
+
+  void highlightLine(PolylineId polylineId) {
+    List<Polyline> temp = polylines.toList();
+    for (var i = 0; i < temp.length; i++) {
+      if (temp[i].polylineId == polylineId) {
+        temp[i] = temp[i].copyWith(
+          colorParam: temp[i].color.withOpacity(1),
+          widthParam: 12,
+          zIndexParam: 999,
+        );
+      } else {
+        temp[i] = temp[i].copyWith(
+          colorParam: temp[i].color.withOpacity(0.7),
+          widthParam: 8,
+          zIndexParam: 1,
+        );
+      }
+    }
+    polylines = temp.toSet();
+    update();
+  }
+
+  Future<void> generateLines() async {
+    polylines.clear();
+    distanceLines.clear();
+
+    await matrixDistance();
+    printMatriks();
+
+    List<int> tour = cih.cheapestInsertion(distMatrix: matriks, start: 0);
+    // List<int> tour = BF().bruteForceTSP(matriks);
+    // List<int> tour = NIH.nearestInsertionHeuristic(distMatrix: matriks);
+
+    distance = cih.calculateTourCost(matriks, tour).toString();
+
+    print('tour : $tour');
+    print('distance : $distance');
+    print('tour.length : ${tour.length}');
+
+    for (var i = 0; i < tour.length; i++) {
+      Color colorLine = Constants.listColor[i];
+
+      int from = tour[i];
+      int to = tour[(i + 1) % tour.length];
+
+      distanceLines.add({
+        'id': i.toString(),
+        'color': colorLine,
+        // 'route': 'from : $from, to : $to, cost',
+        'route': [from, to],
+        'distance': matriks[from][to],
+      });
+
+      if (i == tour.length - 1) {
+        await drawPolyPoints(
+          idLine: i.toString(),
+          colorId: i,
+          lat1: latLngPoint[0][0],
+          lng1: latLngPoint[0][1],
+          lat2: latLngPoint[tour[i]][0],
+          lng2: latLngPoint[tour[i]][1],
+          colorLine: colorLine,
+        );
+      } else {
+        await drawPolyPoints(
+          idLine: i.toString(),
+          colorId: i,
+          lat1: latLngPoint[tour[i]][0],
+          lng1: latLngPoint[tour[i]][1],
+          lat2: latLngPoint[tour[i + 1]][0],
+          lng2: latLngPoint[tour[i + 1]][1],
+          colorLine: colorLine,
+        );
+      }
+    }
+
+    update();
+  }
+
+  void printMatriks() {
+    for (var i = 0; i < matriks.length; i++) {
+      print(matriks[i]);
+    }
+  }
+
+  void changeVisiblePolyline(PolylineId polylineId) {
+    bool line = polylines.firstWhere((element) => element.polylineId == polylineId).visible;
+    List<Polyline> temp = polylines.toList();
+
+    for (var i = 0; i < temp.length; i++) {
+      if (temp[i].polylineId == polylineId) {
+        temp[i] = temp[i].copyWith(visibleParam: !line);
+        break;
+      }
+    }
+    polylines = temp.toSet();
+    update();
+  }
+
+  void onlyVisiblePolyline(PolylineId polylineId) {
+    List<Polyline> temp = polylines.toList();
+    for (var i = 0; i < temp.length; i++) {
+      if (temp[i].polylineId == polylineId) {
+        temp[i] = temp[i].copyWith(visibleParam: true);
+      } else {
+        temp[i] = temp[i].copyWith(visibleParam: false);
+      }
+    }
+    polylines = temp.toSet();
+    update();
+  }
+// ! ---------------------------------------------GENERATE LINES END---------------------------------------------
+
+  Future<void> deleteMarker(MarkerId markerId) async {
     markers.removeWhere((marker) => marker.markerId == markerId);
     latLngPoint.removeAt(int.parse(markerId.value) - 1);
     if (markers.length > 1) {
-      generateLines();
+      await generateLines();
     } else {
       polylines.clear();
     }
@@ -74,6 +252,7 @@ class SimpleMapController extends GetxController {
     latLngPoint.clear();
     polylines.clear();
     distanceLines.clear();
+    matriks.clear();
     update();
   }
 
@@ -94,92 +273,6 @@ class SimpleMapController extends GetxController {
       await Geolocator.requestPermission();
     });
     return await Geolocator.getCurrentPosition();
-  }
-
-// ! ---------------------------------------------GENERATE LINES---------------------------------------------
-  Future<void> getPolyPoints({
-    required String idLine,
-    required int colorId,
-    required double lat1,
-    required double lng1,
-    required double lat2,
-    required double lng2,
-  }) async {
-    List<LatLng> polylineCoordinates = [];
-    PolylinePoints polylinePoints = PolylinePoints();
-
-    PolylineResult result = await polylinePoints.getRouteBetweenCoordinates(
-      Constants.apiKey,
-      PointLatLng(lat1, lng1),
-      PointLatLng(lat2, lng2),
-    );
-
-    if (result.points.isNotEmpty) {
-      for (var point in result.points) {
-        polylineCoordinates.add(LatLng(point.latitude, point.longitude));
-      }
-    }
-
-    polylines.add(
-      Polyline(
-        polylineId: PolylineId(idLine),
-        color: Constants.colors[colorId],
-        points: polylineCoordinates,
-        width: 4,
-        consumeTapEvents: true,
-      ),
-    );
-  }
-
-  Future<void> generateLines() async {
-    polylines.clear();
-    distanceLines.clear();
-
-    for (var i = 0; i < latLngPoint.length - 1; i++) {
-      // ! GENERATE DISTANCE
-      int distance = distanceTwoPoint(
-        latLngPoint[i][0],
-        latLngPoint[i][1],
-        latLngPoint[i + 1][0],
-        latLngPoint[i + 1][1],
-      );
-
-      distanceLines.add({
-        'id': i.toString(),
-        'color': Constants.colors[i],
-        'distance': distance,
-      });
-
-      // ! GENERATE LINE
-      await getPolyPoints(
-        idLine: i.toString(),
-        colorId: i,
-        lat1: latLngPoint[i][0],
-        lng1: latLngPoint[i][1],
-        lat2: latLngPoint[i + 1][0],
-        lng2: latLngPoint[i + 1][1],
-      );
-    }
-
-    update();
-  }
-
-  int distanceTwoPoint(double lat1, double lng1, double lat2, double lng2) {
-    double distance = Geolocator.distanceBetween(lat1, lng1, lat2, lng2);
-    return distance.toInt();
-  }
-
-  void updatePoliline(PolylineId polylineId) {
-    // polylines.removeWhere((element) => element. == polylineId);
-    Polyline line = polylines.firstWhere((element) => element.polylineId == polylineId);
-    // polylines
-    // update();
-  }
-// ! ---------------------------------------------GENERATE LINES END---------------------------------------------
-
-  void disableLine(PolylineId polylineId) {
-    polylines.firstWhere((element) => element.polylineId == polylineId).copyWith(visibleParam: false);
-    update();
   }
 
   @override

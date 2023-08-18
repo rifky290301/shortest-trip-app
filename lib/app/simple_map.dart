@@ -4,29 +4,33 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:skrispsi_app/app/simple_map_controller.dart';
 
 class MapSample extends StatefulWidget {
+  const MapSample({super.key});
+
   @override
   State<MapSample> createState() => _MapSampleState();
 }
 
 class _MapSampleState extends State<MapSample> with SingleTickerProviderStateMixin {
+  final SimpleMapController _controller = Get.put(SimpleMapController());
   late TabController tabController;
 
   @override
   Widget build(BuildContext context) {
     return GetBuilder<SimpleMapController>(
-      init: Get.put(SimpleMapController()),
+      init: _controller,
       initState: ((state) {
-        tabController = TabController(length: 3, vsync: this);
+        tabController = TabController(length: 2, vsync: this);
       }),
       builder: (ctrl) {
         if (ctrl.isLoading) {
           return Scaffold(
-            appBar: AppBar(title: const Text('Simple Map')),
+            appBar: AppBar(title: const Text('Maps with CIH Algorithm')),
             drawer: drawerCustom(ctrl),
             body: Stack(
               children: [
                 GoogleMap(
                   myLocationEnabled: true,
+                  // polygons: ctrl.polygons,
                   markers: Set<Marker>.of(ctrl.markers),
                   polylines: ctrl.polylines,
                   initialCameraPosition: ctrl.initialGoogleMap,
@@ -63,32 +67,26 @@ class _MapSampleState extends State<MapSample> with SingleTickerProviderStateMix
           children: [
             Expanded(
               flex: 1,
-              child: Container(
-                // color: Colors.green,
-                child: TabBar(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  controller: tabController,
-                  labelColor: Colors.blue,
-                  tabs: const [
-                    Tab(text: 'Position'),
-                    Tab(text: 'Distance'),
-                    Tab(text: 'Rute'),
-                  ],
-                ),
+              child: TabBar(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                controller: tabController,
+                labelColor: Colors.blue,
+                tabs: const [
+                  Tab(text: 'Position'),
+                  Tab(text: 'Distance'),
+                  // Tab(text: 'Rute'),
+                ],
               ),
             ),
             Expanded(
               flex: 9,
-              child: Container(
-                // color: Colors.yellow,
-                child: TabBarView(
-                  controller: tabController,
-                  children: [
-                    positionInformation(ctrl),
-                    distanceInformation(ctrl),
-                    routeInformation(ctrl),
-                  ],
-                ),
+              child: TabBarView(
+                controller: tabController,
+                children: [
+                  positionInformation(ctrl),
+                  distanceInformation(ctrl),
+                  // routeInformation(ctrl),
+                ],
               ),
             ),
           ],
@@ -103,7 +101,7 @@ class _MapSampleState extends State<MapSample> with SingleTickerProviderStateMix
       itemBuilder: (context, index) {
         Marker data = ctrl.markers[index];
         return ListTile(
-          title: Text('Position ${data.markerId.value}'),
+          title: Text('Position ${int.parse(data.markerId.value) + 1}'),
           subtitle: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -126,34 +124,40 @@ class _MapSampleState extends State<MapSample> with SingleTickerProviderStateMix
     return ListView.builder(
       itemCount: ctrl.distanceLines.length,
       itemBuilder: (context, index) {
-        Map<String, dynamic> origin = ctrl.distanceLines[index];
-        Map<String, dynamic> destination = ctrl.distanceLines[index == ctrl.distanceLines.length - 1 ? 0 : index + 1];
+        Map<String, dynamic> line = ctrl.distanceLines[index];
         return ListTile(
           title: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             mainAxisAlignment: MainAxisAlignment.start,
             children: [
-              Text('Line id ${origin['id']}'),
+              Text('From ${(line['route'][0]) + 1}'),
               const SizedBox(width: 10),
               Container(
-                width: 80,
+                width: 60,
                 height: 3,
-                color: origin['color'] as Color,
+                color: line['color'] as Color,
               ),
               const SizedBox(width: 10),
-              Text('${destination['id']}'),
+              Text('To ${(line['route'][1]) + 1}'),
             ],
           ),
-          subtitle: Text('Distance: ${origin['distance']}'),
-          trailing: IconButton(
-            icon: const Icon(Icons.remove_red_eye_sharp),
-            onPressed: () {
-              ctrl.disableLine(ctrl.distanceLines[index]['id']);
-              // ctrl.showLine(ctrl.distanceLines[index]['id'] as String);
-              // ctrl.polylines[index].visible = !ctrl.polylines[index].visible;
-              // ctrl.polylines[index] = ctrl.polylines[index];
-              // ctrl.deleteMarker(ctrl.markers[index].markerId);
-            },
+          subtitle: Text('Distance: ${line['distance']}'),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                icon: ctrl.polylinesList[index].visible ? const Icon(Icons.visibility) : const Icon(Icons.visibility_off),
+                onPressed: () {
+                  ctrl.changeVisiblePolyline(ctrl.polylinesList[index].polylineId);
+                },
+              ),
+              IconButton(
+                icon: const Icon(Icons.delivery_dining_rounded),
+                onPressed: () {
+                  ctrl.onlyVisiblePolyline(ctrl.polylinesList[index].polylineId);
+                },
+              ),
+            ],
           ),
         );
       },
@@ -197,9 +201,11 @@ class _MapSampleState extends State<MapSample> with SingleTickerProviderStateMix
             backgroundColor: Colors.deepPurpleAccent,
             child: const Icon(Icons.directions),
             onPressed: () {
+              showDialog(context: context, builder: (context) => popupLoading());
               ctrl.generateLines().then((value) {
                 setState(() {});
-                // ctrl.matrixDistance();
+                ctrl.matrixDistance();
+                Navigator.pop(context);
               });
             },
           ),
@@ -219,10 +225,12 @@ class _MapSampleState extends State<MapSample> with SingleTickerProviderStateMix
     );
   }
 
-  popupLoading() {
-    return Get.defaultDialog(
-      title: 'Generate Route',
-      content: const CircularProgressIndicator(),
+  Container popupLoading() {
+    return Container(
+      padding: EdgeInsets.zero,
+      child: const Center(
+        child: CircularProgressIndicator(),
+      ),
     );
   }
 }
