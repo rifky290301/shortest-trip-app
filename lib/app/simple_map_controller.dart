@@ -1,21 +1,23 @@
 import 'dart:async';
-import 'dart:ui';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_polyline_points/flutter_polyline_points.dart';
 import 'package:geolocator/geolocator.dart';
 // import 'package:geolocator/geolocator.dart';
 import 'package:get/get.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:skrispsi_app/app/models/cih_model.dart';
+import 'package:skrispsi_app/app/network/request_api.dart';
 
 import 'constants.dart';
-import 'helper/math_calculate.dart';
-import 'logic/cheapes_insertion_heuristic.dart';
+import 'models/matriks_model.dart';
 
 class SimpleMapController extends GetxController {
   final Completer<GoogleMapController> controllerGoogleMap = Completer();
-  MathCalculate mathCalculate = MathCalculate();
+  final GlobalKey<TooltipState> tooltipkey = GlobalKey<TooltipState>();
+  // MathCalculate mathCalculate = MathCalculate();
   PolylinePoints polylinePoints = PolylinePoints();
-  CIH cih = CIH();
+  // CIH cih = CIH();
   Constants constants = Constants();
 
   late CameraPosition initialGoogleMap;
@@ -26,35 +28,39 @@ class SimpleMapController extends GetxController {
   Set<Polyline> polylines = {};
   List<List<double>> latLngPoint = [];
   List<Map<String, dynamic>> distanceLines = [];
-  List<List<double>> matriks = [];
+  List<List<int>> matriks = [];
   String? distance;
 
   List<Polyline> get polylinesList => polylines.toList();
 
   Future<void> matrixDistance() async {
-    List<List<double>> matriksTemp = [];
-    for (int i = 0; i < latLngPoint.length; i++) {
-      List<double> temp = [];
-      for (int j = 0; j < latLngPoint.length; j++) {
-        await mathCalculate
-            .calculateDistanceTwoPoint(
-              lat1: latLngPoint[i][0],
-              lng1: latLngPoint[i][1],
-              lat2: latLngPoint[j][0],
-              lng2: latLngPoint[j][1],
-              polylinePoints: polylinePoints,
-            )
-            .then((value) => temp.add(value.toDouble()));
-      }
-      matriksTemp.add(temp);
-    }
-    matriks.addAll(matriksTemp);
+    // List<List<double>> matriksTemp = [];
 
-    for (int i = 0; i < matriksTemp.length; i++) {
-      for (int j = 0; j < matriksTemp.length; j++) {
-        matriks[i][j] = matriksTemp[j][i];
-      }
-    }
+    MatriksModel res = await convertMatrix(latLngPoint) ?? MatriksModel();
+    matriks = res.matriks ?? [];
+
+    // for (int i = 0; i < latLngPoint.length; i++) {
+    //   List<double> temp = [];
+    //   for (int j = 0; j < latLngPoint.length; j++) {
+    //     await mathCalculate
+    //         .calculateDistanceTwoPoint(
+    //           lat1: latLngPoint[i][0],
+    //           lng1: latLngPoint[i][1],
+    //           lat2: latLngPoint[j][0],
+    //           lng2: latLngPoint[j][1],
+    //           polylinePoints: polylinePoints,
+    //         )
+    //         .then((value) => temp.add(value.toDouble()));
+    //   }
+    //   matriksTemp.add(temp);
+    // }
+    // matriks.addAll(matriksTemp);
+
+    // for (int i = 0; i < matriksTemp.length; i++) {
+    //   for (int j = 0; j < matriksTemp.length; j++) {
+    //     matriks[i][j] = matriksTemp[j][i];
+    //   }
+    // }
   }
 
   void addLocationMarker({required double lat, required double lng}) {
@@ -118,6 +124,11 @@ class SimpleMapController extends GetxController {
         onTap: () {
           // print('tap');
           highlightLine(PolylineId(idLine));
+
+          // const Tooltip(
+          //   message: 'I am a Tooltip',
+          //   child: Text('Hover over the text to show a tooltip.'),
+          // );
         },
         // zIndex: colorId,
       ),
@@ -150,16 +161,16 @@ class SimpleMapController extends GetxController {
     distanceLines.clear();
 
     await matrixDistance();
-    printMatriks();
+    // printMatriks();
 
-    List<int> tour = cih.cheapestInsertion(distMatrix: matriks, start: 0);
-    // List<int> tour = BF().bruteForceTSP(matriks);
-    // List<int> tour = NIH.nearestInsertionHeuristic(distMatrix: matriks);
+    CihModel res = await requestApiCih(matriks) ?? CihModel();
 
-    distance = cih.calculateTourCost(matriks, tour).toString();
+    List<int> tour = res.tour ?? [];
+
+    // List<int> tour = cih.cheapestInsertion(distMatrix: matriks, start: 0);
 
     print('tour : $tour');
-    print('distance : $distance');
+    print('distance : ${res.total}');
     print('tour.length : ${tour.length}');
 
     for (var i = 0; i < tour.length; i++) {
@@ -171,7 +182,6 @@ class SimpleMapController extends GetxController {
       distanceLines.add({
         'id': i.toString(),
         'color': colorLine,
-        // 'route': 'from : $from, to : $to, cost',
         'route': [from, to],
         'distance': matriks[from][to],
       });
@@ -273,6 +283,12 @@ class SimpleMapController extends GetxController {
       await Geolocator.requestPermission();
     });
     return await Geolocator.getCurrentPosition();
+  }
+
+  Future showTraffic() async {
+    final GoogleMapController controller = await controllerGoogleMap.future;
+    controller.setMapStyle('[{"featureType": "all","stylers": [{"visibility": "off"}]}]');
+    controller.setMapStyle('[{"featureType": "all","stylers": [{"visibility": "on"}]}]');
   }
 
   @override
